@@ -9,13 +9,6 @@ __pycache__/
 .venv/
 venv/
 
-# Local databases
-*.db
-*.sqlite
-*.sqlite3
-
-# ChromaDB files
-data/chroma/
 
 # IDE files
 .vscode/
