@@ -19,6 +19,10 @@ def create_routes(
             )
         }
 
+    @router.get("/incidents")
+    async def list_incidents():
+        return orchestrator.database.list_incidents()
+
     @router.post("/incidents")
     async def investigate(
         request: IncidentRequest,

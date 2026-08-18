@@ -125,6 +125,34 @@ class Database:
 
         return incident
 
+    def list_incidents(
+        self,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM incidents
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+
+        incidents = []
+
+        for row in rows:
+            incident = dict(row)
+
+            if incident["result"]:
+                incident["result"] = json.loads(
+                    incident["result"]
+                )
+            else:
+                incident["result"] = None
+
+            incidents.append(incident)
+
+        return incidents
+
     def add_event(
         self,
         incident_id: str,
