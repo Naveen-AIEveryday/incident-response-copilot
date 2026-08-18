@@ -6,16 +6,16 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.agents import IncidentAgents
-from app.database import AuditDatabase
+from app.database import Database
 from app.knowledge_base import KnowledgeBase
 from app.models import ApprovalRequest, IncidentRequest
-from app.plugins import KnowledgePlugin, create_kernel
+from app.plugins import create_kernel
 
 
-class IncidentOrchestrator:
+class Orchestrator:
     def __init__(
         self,
-        database: AuditDatabase,
+        database: Database,
         knowledge_base: KnowledgeBase,
         agents: IncidentAgents,
     ):
@@ -23,29 +23,32 @@ class IncidentOrchestrator:
         self.knowledge_base = knowledge_base
         self.agents = agents
 
-        # Semantic Kernel is used for the knowledge plugin layer.
-        self.kernel = create_kernel(knowledge_base)
-        self.knowledge_plugin = KnowledgePlugin(knowledge_base)
+        # Semantic Kernel plugin used for knowledge retrieval.
+        self.kernel, self.knowledge_plugin = create_kernel(
+            knowledge_base
+        )
 
     async def investigate(
         self,
         incident: IncidentRequest,
     ) -> dict[str, Any]:
         incident_id = str(uuid.uuid4())
+        incident_data = incident.model_dump()
 
         self.database.create_incident(
             incident_id=incident_id,
-            title=incident.title,
-            description=incident.description,
-            logs=incident.logs,
+            incident=incident_data,
         )
 
         self.database.add_event(
             incident_id,
             "incident_created",
-            {"title": incident.title},
+            {
+                "title": incident.title,
+            },
         )
 
+        # Triage and log analysis are independent, so they run together.
         triage, log_analysis = await asyncio.gather(
             self.agents.triage(incident),
             self.agents.analyze_logs(incident),
@@ -63,35 +66,65 @@ class IncidentOrchestrator:
             log_analysis,
         )
 
-        search_query = (
-            f"{incident.title}\n"
-            f"{incident.description}\n"
-            f"{json.dumps(log_analysis)}"
-        )
+        # Send complete incident context to the knowledge search.
+        search_query = f"""
+Incident title:
+{incident.title}
 
-        # Semantic Kernel plugin function.
+Incident description:
+{incident.description}
+
+Incident logs:
+{incident.logs}
+
+Triage result:
+{json.dumps(triage, indent=2)}
+
+Log-analysis result:
+{json.dumps(log_analysis, indent=2)}
+"""
+
         knowledge_json = (
-            self.knowledge_plugin.search_incident_knowledge(search_query)
+            self.knowledge_plugin.search_knowledge(
+                search_query
+            )
         )
 
-        knowledge_matches = json.loads(knowledge_json)
+        # Keep KB context deliberately short and relevant.
+        knowledge = json.loads(knowledge_json)[:1]
 
         self.database.add_event(
             incident_id,
             "knowledge_retrieval_completed",
-            {"matches": knowledge_matches},
+            {
+                "documents": knowledge,
+            },
         )
 
-        root_cause = await self.agents.analyze_root_cause(
+        short_runbook = await self.agents.generate_short_runbook(
             incident=incident,
             triage=triage,
             log_analysis=log_analysis,
-            knowledge_matches=knowledge_matches,
+            knowledge=knowledge,
         )
 
         self.database.add_event(
             incident_id,
-            "root_cause_analysis_completed",
+            "short_runbook_generated",
+            short_runbook,
+        )
+
+        root_cause = await self.agents.root_cause(
+            incident=incident,
+            triage=triage,
+            log_analysis=log_analysis,
+            knowledge=knowledge,
+            short_runbook=short_runbook,
+        )
+
+        self.database.add_event(
+            incident_id,
+            "root_cause_completed",
             root_cause,
         )
 
@@ -100,10 +133,11 @@ class IncidentOrchestrator:
             "status": "pending_human_approval",
             "triage": triage,
             "log_analysis": log_analysis,
-            "knowledge_matches": knowledge_matches,
+            "knowledge_matches": knowledge,
+            "short_runbook": short_runbook,
             "root_cause_analysis": root_cause,
             "remediation_note": (
-                "No remediation was executed. "
+                "No production action was executed. "
                 "Human approval is required."
             ),
         }
@@ -118,91 +152,92 @@ class IncidentOrchestrator:
 
     async def approve(
         self,
-        approval: ApprovalRequest,
-    ) -> dict[str, Any]:
-        incident = self.database.get_incident(approval.incident_id)
+        request: ApprovalRequest,
+    ) -> dict[str, str]:
+        incident = self.database.get_incident(
+            request.incident_id
+        )
 
         if incident is None:
             raise HTTPException(
                 status_code=404,
-                detail="Incident was not found.",
+                detail="Incident not found.",
             )
 
         if incident["status"] != "pending_human_approval":
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Incident is not waiting for approval. "
-                    f"Current status: {incident['status']}"
-                ),
+                detail="Approval was already completed.",
             )
 
-        if approval.approved:
+        if request.approved:
             status = "remediation_approved"
             message = (
-                "Remediation approved by the human reviewer. "
+                "Remediation approved. "
                 "No production action was executed."
             )
         else:
             status = "remediation_rejected"
             message = (
-                "Remediation rejected by the human reviewer. "
+                "Remediation rejected. "
                 "No production action was executed."
             )
 
-        approval_details = {
-            "approved": approval.approved,
-            "approved_by": approval.approved_by,
-            "comment": approval.comment,
-            "message": message,
+        result = incident["result"] or {}
+
+        result["approval"] = {
+            "approved": request.approved,
+            "approved_by": request.approved_by,
+            "comment": request.comment,
         }
 
-        self.database.add_event(
-            approval.incident_id,
-            "human_approval",
-            approval_details,
-        )
-
-        result = incident["result"] or {}
-        result["approval"] = approval_details
-
         self.database.update_incident(
-            incident_id=approval.incident_id,
+            incident_id=request.incident_id,
             status=status,
             result=result,
         )
 
+        self.database.add_event(
+            request.incident_id,
+            "human_approval",
+            result["approval"],
+        )
+
         return {
-            "incident_id": approval.incident_id,
+            "incident_id": request.incident_id,
             "status": status,
             "message": message,
         }
 
-    async def report(
+    async def create_report(
         self,
         incident_id: str,
-    ) -> dict[str, Any]:
-        incident = self.database.get_incident(incident_id)
+    ) -> dict[str, str]:
+        incident = self.database.get_incident(
+            incident_id
+        )
 
         if incident is None:
             raise HTTPException(
                 status_code=404,
-                detail="Incident was not found.",
+                detail="Incident not found.",
             )
 
-        report = await self.agents.create_report(
-            incident=incident,
-            approval_status=incident["status"],
-        )
+        if incident["status"] == "pending_human_approval":
+            raise HTTPException(
+                status_code=400,
+                detail="Human approval is required first.",
+            )
+
+        report = await self.agents.report(incident)
 
         self.database.add_event(
             incident_id,
             "report_generated",
-            {"generated": True},
+            {},
         )
 
         return {
             "incident_id": incident_id,
-            "status": incident["status"],
             "report": report,
         }

@@ -28,5 +28,6 @@ class IncidentResult(BaseModel):
     triage: dict[str, Any]
     log_analysis: dict[str, Any]
     knowledge_matches: list[dict[str, Any]]
+    short_runbook: dict[str, Any]
     root_cause_analysis: dict[str, Any]
     remediation_note: str

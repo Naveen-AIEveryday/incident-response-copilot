@@ -11,20 +11,20 @@ class KnowledgePlugin:
         self.knowledge_base = knowledge_base
 
     @kernel_function(
-        name="search_incident_knowledge",
+        name="search_knowledge",
         description=(
-            "Search runbooks and historical incidents "
-            "for evidence related to an IT incident."
+            "Search incident runbooks and historical incidents."
         ),
     )
-    def search_incident_knowledge(self, query: str) -> str:
-        matches = self.knowledge_base.search(query, limit=3)
+    def search_knowledge(self, query: str) -> str:
+        matches = self.knowledge_base.search(query)
         return json.dumps(matches, indent=2)
 
 
-def create_kernel(knowledge_base: KnowledgeBase) -> Kernel:
+def create_kernel(
+    knowledge_base: KnowledgeBase,
+) -> tuple[Kernel, KnowledgePlugin]:
     kernel = Kernel()
-
     plugin = KnowledgePlugin(knowledge_base)
 
     kernel.add_plugin(
@@ -32,4 +32,4 @@ def create_kernel(knowledge_base: KnowledgeBase) -> Kernel:
         plugin_name="knowledge",
     )
 
-    return kernel
+    return kernel, plugin

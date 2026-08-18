@@ -8,3 +8,4 @@ streamlit
 requests
 pydantic
 python-dotenv
+gradio

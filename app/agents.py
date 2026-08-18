@@ -1,17 +1,16 @@
 import json
+import re
 from typing import Any
 
 from agent_framework import Agent
-from agent_framework.ollama import OllamaChatClient
-from app.config import OLLAMA_HOST, OLLAMA_MODEL
+from agent_framework.openai import OpenAIChatClient
 
+from app.config import OLLAMA_HOST, OLLAMA_MODEL
 from app.models import IncidentRequest
 
 
 def response_text(response: Any) -> str:
-    """
-    Extracts text from an Agent Framework response.
-    """
+    """Extract text from an Agent Framework response."""
     text = getattr(response, "text", None)
 
     if text:
@@ -20,34 +19,92 @@ def response_text(response: Any) -> str:
     return str(response)
 
 
-def parse_json_response(
+def _normalize_llm_json(text: str) -> str:
+    """Coerce common local-model JSON formatting issues into valid JSON."""
+    fixed = text
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
+
+    chars: list[str] = []
+    in_string = False
+    escaped = False
+
+    for char in fixed:
+        if in_string:
+            if escaped:
+                chars.append(char)
+                escaped = False
+                continue
+
+            if char == "\\":
+                chars.append(char)
+                escaped = True
+                continue
+
+            if char == '"':
+                chars.append(char)
+                in_string = False
+                continue
+
+            if char in "\r\n\t":
+                chars.append(" ")
+                continue
+
+            chars.append(char)
+            continue
+
+        if char == '"':
+            in_string = True
+
+        chars.append(char)
+
+    fixed = "".join(chars)
+
+    if not fixed.rstrip().endswith("}"):
+        fixed = fixed.rstrip() + "}"
+
+    return fixed
+
+
+def parse_json(
     response: Any,
     agent_name: str,
 ) -> dict[str, Any]:
     text = response_text(response).strip()
 
-    if text.startswith("```json"):
-        text = text.removeprefix("```json")
-        text = text.removesuffix("```")
-        text = text.strip()
+    text = text.replace("```json", "")
+    text = text.replace("```JSON", "")
+    text = text.replace("```", "")
+    text = text.strip()
 
-    elif text.startswith("```"):
-        text = text.removeprefix("```")
-        text = text.removesuffix("```")
-        text = text.strip()
+    first_brace = text.find("{")
+
+    if first_brace == -1:
+        raise ValueError(
+            f"{agent_name} did not return a JSON object:\n{text}"
+        )
+
+    json_text = _normalize_llm_json(text[first_brace:])
 
     try:
-        return json.loads(text)
+        result, _ = json.JSONDecoder().raw_decode(json_text)
     except json.JSONDecodeError as error:
         raise ValueError(
-            f"{agent_name} returned invalid JSON: {text}"
+            f"{agent_name} returned invalid JSON:\n{json_text}"
         ) from error
 
+    if not isinstance(result, dict):
+        raise ValueError(
+            f"{agent_name} did not return a JSON object."
+        )
+
+    return result
 
 class IncidentAgents:
     def __init__(self):
-        self.client = OllamaChatClient(
-            host=OLLAMA_HOST,
+        # Ollama exposes an OpenAI-compatible endpoint.
+        self.client = OpenAIChatClient(
+            api_key="ollama",
+            base_url=OLLAMA_HOST,
             model=OLLAMA_MODEL,
         )
 
@@ -57,21 +114,25 @@ class IncidentAgents:
             instructions="""
 You are an IT incident triage specialist.
 
-Return valid JSON only. Do not use Markdown.
+Return only one valid JSON object.
+Do not use Markdown code fences.
+Do not add explanations before or after the JSON.
 
 Required structure:
 {
   "severity": "low | medium | high | critical",
-  "affected_service": "service name",
+  "affected_service": "short service or component name",
   "incident_summary": "short summary",
   "initial_investigation_steps": [
-    "step 1",
-    "step 2",
-    "step 3"
+    "short step 1",
+    "short step 2"
   ]
 }
 
-Use only the supplied incident information.
+Rules:
+- Use only the supplied incident information.
+- Do not invent facts.
+- Keep the response short.
             """,
         )
 
@@ -79,19 +140,32 @@ Use only the supplied incident information.
             client=self.client,
             name="LogAnalysisAgent",
             instructions="""
-You are an SRE log analysis specialist.
+You are an SRE log-analysis specialist.
 
-Return valid JSON only. Do not use Markdown.
+Return only one valid JSON object.
+Do not use Markdown code fences.
+Do not add explanations before or after the JSON.
 
 Required structure:
 {
-  "key_errors": ["error 1", "error 2"],
-  "patterns": ["pattern 1", "pattern 2"],
-  "suspected_components": ["component 1"],
-  "evidence": ["evidence from supplied logs"]
+  "key_errors": [
+    "short error 1"
+  ],
+  "patterns": [
+    "short pattern 1"
+  ],
+  "suspected_components": [
+    "short component 1"
+  ],
+  "evidence": [
+    "short evidence 1"
+  ]
 }
 
-Do not invent log entries.
+Rules:
+- Use only the supplied logs or error details.
+- Do not invent evidence.
+- Keep the response short.
             """,
         )
 
@@ -99,33 +173,72 @@ Do not invent log entries.
             client=self.client,
             name="RootCauseAgent",
             instructions="""
-You are a senior incident commander.
+You are a senior IT incident commander.
+Your response must be exactly one complete JSON object and nothing else.
 
-Use the incident, triage, log analysis, and knowledge-base evidence.
-
-Return valid JSON only. Do not use Markdown.
+Strict rules:
+- Output must begin with `{` and end with `}`.
+- Use double quotes for every key and every string value.
+- No Markdown fences, no code blocks, no prose before or after the JSON.
+- No trailing commas.
+- No comments or explanations.
+- No incomplete JSON.
+- Do not invent evidence.
+- Use only the supplied incident, logs, and knowledge-base evidence.
 
 Required structure:
 {
-  "root_cause_hypotheses": [
-    {
-      "cause": "probable cause",
-      "confidence": 0,
-      "evidence": ["evidence 1", "evidence 2"]
-    }
+  "root_cause": "short probable cause",
+  "confidence": 0,
+  "evidence": [
+    "short evidence 1",
+    "short evidence 2"
   ],
-  "recommended_remediation": [
-    "safe step 1",
-    "safe step 2"
-  ],
+  "recommended_remediation": "one safe remediation recommendation",
   "requires_human_approval": true
 }
 
 Rules:
-- Return no more than three hypotheses.
-- Confidence must be an integer between 0 and 100.
-- Never claim that a remediation was executed.
+- Return only one root cause.
+- Confidence must be an integer from 0 to 100.
+- Return only one remediation recommendation.
+- Keep the remediation short and practical.
+- Use the supplied incident and relevant knowledge.
+- Do not invent facts.
+- Do not execute any action.
 - Human approval is always required.
+            """,
+        )
+
+        self.short_runbook_agent = Agent(
+            client=self.client,
+            name="ShortRunbookAgent",
+            instructions="""
+You are an incident-response specialist.
+Create a short, practical runbook for the current incident.
+
+Return only one valid JSON object.
+Do not use Markdown fences.
+Do not add explanations before or after the JSON.
+
+Required structure:
+{
+  "title": "short runbook title",
+  "summary": "1 sentence summary",
+  "steps": [
+    "short actionable step 1",
+    "short actionable step 2",
+    "short actionable step 3"
+  ]
+}
+
+Rules:
+- Keep it short and focused.
+- Use the incident details and the supporting knowledge only as context.
+- If the knowledge base has no close match, do not invent a KB result.
+- Base the steps on the actual incident symptoms and likely troubleshooting path.
+- Do not claim production changes were made.
+- Keep the response brief and actionable.
             """,
         )
 
@@ -133,18 +246,17 @@ Rules:
             client=self.client,
             name="ReportAgent",
             instructions="""
-Create a concise Markdown incident report.
+Create a short Markdown incident report.
 
 Include:
 # Incident Report
-## Incident Summary
-## Impact
+## Summary
+## Root Cause
 ## Evidence
-## Root Cause Hypotheses
 ## Recommended Remediation
 ## Approval Status
-## Prevention Recommendations
 
+Mention that remediation was simulated.
 Never claim that a production action was executed.
             """,
         )
@@ -154,44 +266,62 @@ Never claim that a production action was executed.
         incident: IncidentRequest,
     ) -> dict[str, Any]:
         prompt = f"""
-Title:
+Incident title:
 {incident.title}
 
-Description:
+Incident description:
 {incident.description}
 
-Logs:
+Logs or error details:
 {incident.logs}
 """
 
         response = await self.triage_agent.run(prompt)
-        return parse_json_response(response, "Triage agent")
+
+        return parse_json(
+            response,
+            "Triage Agent",
+        )
 
     async def analyze_logs(
         self,
         incident: IncidentRequest,
     ) -> dict[str, Any]:
         prompt = f"""
-Title:
+Incident title:
 {incident.title}
 
-Logs:
+Incident description:
+{incident.description}
+
+Logs or error details:
 {incident.logs}
 """
 
         response = await self.log_agent.run(prompt)
-        return parse_json_response(response, "Log analysis agent")
 
-    async def analyze_root_cause(
+        return parse_json(
+            response,
+            "Log Analysis Agent",
+        )
+
+    async def root_cause(
         self,
         incident: IncidentRequest,
         triage: dict[str, Any],
         log_analysis: dict[str, Any],
-        knowledge_matches: list[dict[str, Any]],
+        knowledge: list[dict[str, Any]],
+        short_runbook: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Send only the first three knowledge documents
+        # to keep the local model prompt small.
+        short_knowledge = knowledge[:3]
+
         prompt = f"""
 Incident:
-{incident.model_dump_json(indent=2)}
+Title: {incident.title}
+Description: {incident.description}
+Logs: {incident.logs}
 
 Triage:
 {json.dumps(triage, indent=2)}
@@ -199,25 +329,97 @@ Triage:
 Log analysis:
 {json.dumps(log_analysis, indent=2)}
 
-Knowledge-base evidence:
-{json.dumps(knowledge_matches, indent=2)}
+Relevant knowledge:
+{json.dumps(short_knowledge, indent=2)}
+
+Generated short runbook:
+{json.dumps(short_runbook or {}, indent=2)}
+
+Use the KB only as supporting context. The short runbook is a concise, incident-specific summary and should not be treated as definitive evidence.
+
+Return only the required JSON object.
 """
 
         response = await self.root_cause_agent.run(prompt)
-        return parse_json_response(response, "Root cause agent")
 
-    async def create_report(
+        return parse_json(
+            response,
+            "Root Cause Agent",
+        )
+
+    async def generate_short_runbook(
         self,
-        incident: dict[str, Any],
-        approval_status: str,
-    ) -> str:
-        prompt = f"""
-Incident details:
-{json.dumps(incident, indent=2)}
+        incident: IncidentRequest,
+        triage: dict[str, Any],
+        log_analysis: dict[str, Any],
+        knowledge: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        short_knowledge = knowledge[:3]
 
-Approval status:
-{approval_status}
+        prompt = f"""
+Incident:
+Title: {incident.title}
+Description: {incident.description}
+Logs: {incident.logs}
+
+Triage:
+{json.dumps(triage, indent=2)}
+
+Log analysis:
+{json.dumps(log_analysis, indent=2)}
+
+Supporting knowledge base context:
+{json.dumps(short_knowledge, indent=2)}
+
+If the knowledge base has no close match, do not invent one.
+Produce a concise incident-specific troubleshooting runbook that is short and actionable.
+Return only the required JSON object.
 """
 
+        try:
+            response = await self.short_runbook_agent.run(prompt)
+            runbook = parse_json(
+                response,
+                "Short Runbook Agent",
+            )
+        except Exception:
+            runbook = {
+                "title": incident.title,
+                "summary": (
+                    "Use the incident details to verify the likely failing path and validate the impacted dependency before escalation."
+                ),
+                "steps": [
+                    "Check the exact incident symptom and logs.",
+                    "Validate the likely service or dependency in scope.",
+                    "Escalate for human approval if the issue remains unclear.",
+                ],
+            }
+
+        if "steps" not in runbook or not isinstance(runbook["steps"], list):
+            runbook["steps"] = [
+                "Check the exact incident symptom and logs.",
+                "Validate the likely service or dependency in scope.",
+                "Escalate for human approval if the issue remains unclear.",
+            ]
+
+        # Keep the generated runbook intentionally short and practical.
+        runbook["steps"] = runbook["steps"][:3]
+        if "summary" not in runbook:
+            runbook["summary"] = (
+                "Validate the likely failing path, confirm the impacted dependency, and escalate if the issue is not yet isolated."
+            )
+
+        return runbook
+
+    async def report(
+        self,
+        incident: dict[str, Any],
+    ) -> str:
+        prompt = json.dumps(
+            incident,
+            indent=2,
+        )
+
         response = await self.report_agent.run(prompt)
+
         return response_text(response)

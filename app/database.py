@@ -5,18 +5,22 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-class AuditDatabase:
-    def __init__(self, database_path: str):
-        self.database_path = database_path
-        self._create_tables()
+class Database:
+    def __init__(self, path: str):
+        self.path = path
+        self.create_tables()
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+    def connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         return connection
 
-    def _create_tables(self) -> None:
-        with self._connect() as connection:
+    @staticmethod
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def create_tables(self) -> None:
+        with self.connect() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS incidents (
@@ -26,7 +30,7 @@ class AuditDatabase:
                     logs TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    result_json TEXT
+                    result TEXT
                 )
                 """
             )
@@ -43,18 +47,12 @@ class AuditDatabase:
                 """
             )
 
-    @staticmethod
-    def now() -> str:
-        return datetime.now(timezone.utc).isoformat()
-
     def create_incident(
         self,
         incident_id: str,
-        title: str,
-        description: str,
-        logs: str,
+        incident: dict[str, str],
     ) -> None:
-        with self._connect() as connection:
+        with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO incidents (
@@ -63,17 +61,19 @@ class AuditDatabase:
                     description,
                     logs,
                     status,
-                    created_at
+                    created_at,
+                    result
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     incident_id,
-                    title,
-                    description,
-                    logs,
+                    incident["title"],
+                    incident["description"],
+                    incident["logs"],
                     "investigating",
                     self.now(),
+                    None,
                 ),
             )
 
@@ -81,22 +81,27 @@ class AuditDatabase:
         self,
         incident_id: str,
         status: str,
-        result: dict[str, Any] | None = None,
+        result: dict[str, Any],
     ) -> None:
-        result_json = json.dumps(result) if result else None
-
-        with self._connect() as connection:
+        with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE incidents
-                SET status = ?, result_json = ?
+                SET status = ?, result = ?
                 WHERE incident_id = ?
                 """,
-                (status, result_json, incident_id),
+                (
+                    status,
+                    json.dumps(result),
+                    incident_id,
+                ),
             )
 
-    def get_incident(self, incident_id: str) -> dict[str, Any] | None:
-        with self._connect() as connection:
+    def get_incident(
+        self,
+        incident_id: str,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
             row = connection.execute(
                 """
                 SELECT *
@@ -111,12 +116,13 @@ class AuditDatabase:
 
         incident = dict(row)
 
-        if incident["result_json"]:
-            incident["result"] = json.loads(incident["result_json"])
+        if incident["result"]:
+            incident["result"] = json.loads(
+                incident["result"]
+            )
         else:
             incident["result"] = None
 
-        incident.pop("result_json", None)
         return incident
 
     def add_event(
@@ -125,7 +131,7 @@ class AuditDatabase:
         event_type: str,
         details: dict[str, Any],
     ) -> None:
-        with self._connect() as connection:
+        with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO audit_events (
@@ -146,11 +152,14 @@ class AuditDatabase:
                 ),
             )
 
-    def get_events(self, incident_id: str) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+    def get_events(
+        self,
+        incident_id: str,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT event_id, event_type, details, created_at
+                SELECT *
                 FROM audit_events
                 WHERE incident_id = ?
                 ORDER BY created_at
@@ -162,7 +171,9 @@ class AuditDatabase:
 
         for row in rows:
             event = dict(row)
-            event["details"] = json.loads(event["details"])
+            event["details"] = json.loads(
+                event["details"]
+            )
             events.append(event)
 
         return events

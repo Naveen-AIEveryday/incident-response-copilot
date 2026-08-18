@@ -2,36 +2,36 @@ from fastapi import FastAPI
 
 from app.agents import IncidentAgents
 from app.config import API_HOST, API_PORT, SQLITE_PATH
-from app.database import AuditDatabase
+from app.database import Database
 from app.knowledge_base import KnowledgeBase
-from app.orchestrator import IncidentOrchestrator
-from app.routes import create_router
+from app.orchestrator import Orchestrator
+from app.routes import create_routes
 
 
-database = AuditDatabase(SQLITE_PATH)
+database = Database(SQLITE_PATH)
 knowledge_base = KnowledgeBase()
 agents = IncidentAgents()
 
-orchestrator = IncidentOrchestrator(
+orchestrator = Orchestrator(
     database=database,
     knowledge_base=knowledge_base,
     agents=agents,
 )
 
 app = FastAPI(
-    title="Agentic IT Incident Response Copilot",
-    version="1.0.0",
+    title="Incident Response Copilot",
 )
 
-app.include_router(create_router(orchestrator))
+app.include_router(
+    create_routes(orchestrator)
+)
 
 
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "app.main:app",
+        app,
         host=API_HOST,
         port=API_PORT,
-        reload=True,
     )
