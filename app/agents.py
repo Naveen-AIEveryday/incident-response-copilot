@@ -5,7 +5,12 @@ from typing import Any
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
-from app.config import OLLAMA_HOST, OLLAMA_MODEL
+from app.config import (
+    ACTIVE_LLM_PROVIDER,
+    ACTIVE_OLLAMA_API_KEY,
+    ACTIVE_OLLAMA_BASE_URL,
+    ACTIVE_OLLAMA_MODEL,
+)
 from app.models import IncidentRequest
 
 
@@ -101,11 +106,17 @@ def parse_json(
 
 class IncidentAgents:
     def __init__(self):
-        # Ollama exposes an OpenAI-compatible endpoint.
+        if ACTIVE_LLM_PROVIDER == "cloud" and not ACTIVE_OLLAMA_API_KEY:
+            raise ValueError(
+                "OLLAMA_API_KEY is required when LLM_PROVIDER=cloud. "
+                "Set it in the .env file."
+            )
+
+        # Ollama exposes an OpenAI-compatible endpoint both locally and via cloud.
         self.client = OpenAIChatClient(
-            api_key="ollama",
-            base_url=OLLAMA_HOST,
-            model=OLLAMA_MODEL,
+            api_key=ACTIVE_OLLAMA_API_KEY,
+            base_url=ACTIVE_OLLAMA_BASE_URL,
+            model=ACTIVE_OLLAMA_MODEL,
         )
 
         self.triage_agent = Agent(

@@ -66,12 +66,54 @@ STREAMLIT_URL = os.getenv(
 
 OLLAMA_HOST = os.getenv(
     "OLLAMA_HOST",
-    "http://localhost:11434/v1"
+    "http://localhost:11434/v1",
 )
 
 OLLAMA_MODEL = os.getenv(
     "OLLAMA_MODEL",
     "llama3.2",
+)
+
+LLM_PROVIDER = os.getenv(
+    "LLM_PROVIDER",
+    "local",
+).strip().lower()
+
+OLLAMA_API_KEY = os.getenv(
+    "OLLAMA_API_KEY",
+    "",
+)
+
+OLLAMA_CLOUD_BASE_URL = os.getenv(
+    "OLLAMA_CLOUD_BASE_URL",
+    "https://ollama.com/v1",
+)
+
+OLLAMA_CLOUD_MODEL = os.getenv(
+    "OLLAMA_CLOUD_MODEL",
+    OLLAMA_MODEL,
+)
+
+ACTIVE_LLM_PROVIDER = (
+    "local" if LLM_PROVIDER not in {"local", "cloud"} else LLM_PROVIDER
+)
+
+ACTIVE_OLLAMA_API_KEY = (
+    "ollama"
+    if ACTIVE_LLM_PROVIDER == "local"
+    else OLLAMA_API_KEY
+)
+
+ACTIVE_OLLAMA_BASE_URL = (
+    OLLAMA_HOST
+    if ACTIVE_LLM_PROVIDER == "local"
+    else OLLAMA_CLOUD_BASE_URL
+)
+
+ACTIVE_OLLAMA_MODEL = (
+    OLLAMA_MODEL
+    if ACTIVE_LLM_PROVIDER == "local"
+    else OLLAMA_CLOUD_MODEL
 )
 
 API_HOST = os.getenv(
