@@ -69,6 +69,9 @@ To inspect the raised incidents from the terminal:
 python -c "import sqlite3; conn=sqlite3.connect('data/incidents.db'); print(conn.execute('SELECT incident_id, title, status, created_at FROM incidents ORDER BY created_at DESC').fetchall()); conn.close()"
 ```
 
+## Example incidents
+A ready-to-use set of sample incidents is available in [Example incidents.txt](Example%20incidents.txt). These examples can be used to raise incidents in the app and test the full investigation flow quickly.
+
 ## Deployment copy
 A separate deployment-ready folder is included at [hf_deploy](hf_deploy). It is kept separate from the main app so the working local functionality remains unchanged.
 
