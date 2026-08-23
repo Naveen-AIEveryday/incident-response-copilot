@@ -1,0 +1,72 @@
+Example incidents you can raise in this app
+These are realistic, test-friendly examples for the incident-response flow:
+
+1. Python not recognized in VS Code
+Title: Python command not found in VS Code terminal
+Description: Python is installed, but the command does not work inside the VS Code terminal.
+Logs:
+'python' is not recognized as an internal or external command
+Python is installed, but VS Code cannot identify the Python interpreter.
+
+
+2. Database connection failure
+Title: Database connection timeout in production API
+Description: The application fails to connect to the database during request processing.
+Logs:
+Connection timed out after 5000 ms
+dial tcp: i/o timeout
+failed to connect to database
+
+
+3. Service unavailable
+Title: Payment API returning 503 errors
+Description: The payment service is intermittently unavailable after a deployment.
+Logs:
+HTTP 503 Service Unavailable
+upstream connect error or disconnect/reset before headers
+pods in crashloopbackoff
+
+
+4. Authentication login failure
+Title: User login failures after SSO change
+Description: Users are unable to sign in after the identity provider configuration update.
+Logs:
+invalid_grant
+token signature invalid
+redirect_uri mismatch
+
+
+5. Kubernetes pod crash
+Title: Frontend pod crashing repeatedly
+Description: The frontend deployment is restarting and users cannot access the application.
+Logs:
+Back-off restarting failed container
+Exit code: 137
+OOMKilled
+
+
+6. DNS issue
+Title: Website not loading in Chrome
+Description: Users cannot reach the application homepage.
+Logs:
+ERR_CONNECTION_TIMED_OUT
+DNS_PROBE_FINISHED_NXDOMAIN
+Temporary failure in name resolution
+
+
+7. Disk full
+Title: Disk space exhausted on application server
+Description: The server logs are no longer being written and the service is unstable.
+Logs:
+No space left on device
+disk full
+unable to write to /var/log/app.log
+
+
+8. API latency spike
+Title: API latency increased sharply after release
+Description: Requests to the API are timing out and response times are much higher than normal.
+Logs:
+p95 latency 4200ms
+read timeout after 2000ms
+queue depth increased to 300
