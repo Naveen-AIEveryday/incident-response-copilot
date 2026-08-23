@@ -1,0 +1,11 @@
+agent-framework
+agent-framework-ollama
+semantic-kernel
+chromadb
+fastapi
+uvicorn[standard]
+streamlit
+requests
+pydantic
+python-dotenv
+gradio
