@@ -25,6 +25,21 @@ st.caption(
     "AI-assisted incident investigation with human approval."
 )
 
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+    }
+    div[data-testid="stHorizontalBlock"] > div {
+        align-items: flex-start;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # ---------------------------------------------------------
 # Session state
@@ -148,42 +163,94 @@ def render_summary_table(rows: list[dict[str, str]]) -> None:
     )
 
 
+def stream_text_chunks(text: str, chunk_size: int = 30):
+    if not text:
+        yield "No output returned."
+        return
+
+    for index in range(0, len(text), chunk_size):
+        yield text[index : index + chunk_size]
+
+
+def render_agent_telemetry(label: str, telemetry: dict | None) -> None:
+    if not telemetry:
+        return
+
+    st.markdown(
+        f"<div style='border:1px solid #3a3f51; border-radius:12px; padding:12px 12px 10px 12px; background:linear-gradient(180deg, #101827 0%, #0d1320 100%); margin-bottom:10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);'>"
+        f"<div style='font-size: 0.82rem; font-weight: 700; color: #dfe7ff; margin-bottom: 8px;'>{label}</div>"
+        f"<div style='font-size: 0.76rem; color: #c7d2fe;'>Model: <b>{telemetry.get('model', 'n/a')}</b></div>"
+        f"<div style='font-size: 0.76rem; color: #c7d2fe;'>Provider: <b>{telemetry.get('provider', 'n/a')}</b></div>"
+        f"<div style='font-size: 0.76rem; color: #c7d2fe;'>TTFT (est.): <b>{telemetry.get('ttft_ms', 0)} ms</b></div>"
+        f"<div style='font-size: 0.76rem; color: #c7d2fe;'>Latency: <b>{telemetry.get('total_ms', 0)} ms</b></div>"
+        f"<div style='font-size: 0.76rem; color: #c7d2fe;'>Context: <b>{telemetry.get('context_usage_percent', 0)}%</b></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_telemetry_sidebar(telemetry_blocks: list[tuple[str, dict | None]]) -> None:
+    with st.container():
+        st.markdown(
+            "<div style='font-size: 1rem; font-weight: 700; margin-bottom: 8px;'>AI execution details</div>",
+            unsafe_allow_html=True,
+        )
+        for label, telemetry in telemetry_blocks:
+            render_agent_telemetry(label, telemetry)
+
+
 # ---------------------------------------------------------
-# Incident form
+# Incident form and telemetry panel
 # ---------------------------------------------------------
 
-with st.form("incident_form"):
-    st.subheader("Submit an incident")
+form_col, telemetry_col = st.columns([2.6, 1.2])
 
-    title = st.text_input(
-        "Incident title",
-        value="Python is not recognized in VS Code",
-    )
+with form_col:
+    with st.form("incident_form"):
+        st.subheader("Submit an incident")
 
-    description = st.text_area(
-        "Incident description",
-        value=(
-            "Python is installed, but the Python command "
-            "is not working in the VS Code terminal."
-        ),
-        height=100,
-    )
+        title = st.text_input(
+            "Incident title",
+            value="Python is not recognized in VS Code",
+        )
 
-    logs = st.text_area(
-        "Logs or error details",
-        value=(
-            "'python' is not recognized as an internal or "
-            "external command.\n"
-            "Python is installed, but VS Code cannot identify "
-            "the Python interpreter."
-        ),
-        height=160,
-    )
+        description = st.text_area(
+            "Incident description",
+            value=(
+                "Python is installed, but the Python command "
+                "is not working in the VS Code terminal."
+            ),
+            height=100,
+        )
 
-    investigate_clicked = st.form_submit_button(
-        "Investigate incident",
-        type="primary",
-    )
+        logs = st.text_area(
+            "Logs or error details",
+            value=(
+                "'python' is not recognized as an internal or "
+                "external command.\n"
+                "Python is installed, but VS Code cannot identify "
+                "the Python interpreter."
+            ),
+            height=160,
+        )
+
+        investigate_clicked = st.form_submit_button(
+            "Investigate incident",
+            type="primary",
+        )
+
+with telemetry_col:
+    result = st.session_state.incident_result
+    if result:
+        render_telemetry_sidebar(
+            [
+                ("Triage", result.get("triage", {}).get("_telemetry")),
+                ("Runbook", result.get("short_runbook", {}).get("_telemetry")),
+                ("Root cause", result.get("root_cause_analysis", {}).get("_telemetry")),
+            ]
+        )
+    else:
+        st.info("Submit an incident to view agent timing and context details.")
 
 
 if investigate_clicked:
@@ -218,7 +285,10 @@ result = st.session_state.incident_result
 
 if result:
     st.divider()
-    st.subheader("Investigation result")
+    st.markdown(
+        "<div style='padding:8px 0 12px 0;'><h3 style='margin:0;'>Investigation result</h3></div>",
+        unsafe_allow_html=True,
+    )
 
     incident_id = result.get(
         "incident_id",
@@ -230,18 +300,21 @@ if result:
         "",
     )
 
-    st.write(
-        f"**Incident ID:** `{incident_id}`"
-    )
-
-    st.write(
-        f"**Status:** `{status}`"
-    )
-
     triage = result.get(
         "triage",
         {},
     )
+    short_runbook = result.get(
+        "short_runbook",
+        {},
+    )
+    root_cause = result.get(
+        "root_cause_analysis",
+        {},
+    )
+
+    st.write(f"**Incident ID:** `{incident_id}`")
+    st.write(f"**Status:** `{status}`")
 
     log_analysis = result.get(
         "log_analysis",
@@ -287,11 +360,12 @@ if result:
     render_summary_table(investigation_rows)
 
     st.subheader("Incident summary")
-
-    st.write(
-        triage.get(
-            "incident_summary",
-            "No summary returned.",
+    st.write_stream(
+        stream_text_chunks(
+            triage.get(
+                "incident_summary",
+                "No summary returned.",
+            )
         )
     )
 
@@ -348,25 +422,18 @@ if result:
     # One incident-focused runbook only
     # -----------------------------------------------------
 
-    short_runbook = result.get(
-        "short_runbook",
-        {},
-    )
-
     if short_runbook:
         st.subheader("Runbook")
-        st.write(
-            f"**Title:** {short_runbook.get('title', 'Incident runbook')}"
-        )
-        st.write(
-            short_runbook.get(
-                "summary",
-                "No summary available.",
+
+        runbook_text = (
+            f"**Title:** {short_runbook.get('title', 'Incident runbook')}\n\n"
+            f"{short_runbook.get('summary', 'No summary available.')}\n\n"
+            + "\n".join(
+                f"- {step}"
+                for step in short_runbook.get("steps", [])[:3]
             )
         )
-
-        for step in short_runbook.get("steps", [])[:3]:
-            st.write(f"- {step}")
+        st.write_stream(stream_text_chunks(runbook_text))
     else:
         st.info(
             "No incident-specific runbook was generated."

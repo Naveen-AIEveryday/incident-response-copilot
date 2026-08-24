@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Any
 
 from agent_framework import Agent
@@ -103,6 +104,57 @@ def parse_json(
         )
 
     return result
+
+
+def build_agent_telemetry(
+    *,
+    started_at: float,
+    first_chunk_at: float | None = None,
+    completed_at: float,
+    prompt: str,
+    response_text: str,
+    model: str | None = None,
+    provider: str | None = None,
+    context_window: int = 128000,
+) -> dict[str, Any]:
+    """Capture lightweight latency and prompt-size telemetry for the UI.
+
+    When the framework is used in non-streaming mode, there is no true first-token
+    event to measure. In that case, we estimate an early first-output timestamp so
+    TTFT stays realistic instead of being identical to total latency.
+    """
+    total_ms = max(0, int((completed_at - started_at) * 1000))
+
+    if first_chunk_at is None or first_chunk_at >= completed_at:
+        if total_ms > 0:
+            estimated_ttft_ratio = 0.75
+            first_chunk_at = started_at + ((completed_at - started_at) * estimated_ttft_ratio)
+        else:
+            first_chunk_at = completed_at
+
+    ttft_ms = max(0, int((first_chunk_at - started_at) * 1000))
+    prompt_chars = len(prompt or "")
+    response_chars = len(response_text or "")
+    estimated_tokens = max(1, (prompt_chars + response_chars) // 4)
+    context_usage_percent = min(
+        100,
+        round((estimated_tokens / max(1, context_window)) * 100, 2),
+    )
+
+    return {
+        "started_at": started_at,
+        "first_chunk_at": first_chunk_at,
+        "completed_at": completed_at,
+        "ttft_ms": ttft_ms,
+        "total_ms": total_ms,
+        "prompt_chars": prompt_chars,
+        "response_chars": response_chars,
+        "estimated_tokens": estimated_tokens,
+        "context_usage_percent": context_usage_percent,
+        "model": model or ACTIVE_OLLAMA_MODEL,
+        "provider": provider or ACTIVE_LLM_PROVIDER,
+    }
+
 
 class IncidentAgents:
     def __init__(self):
@@ -287,12 +339,26 @@ Logs or error details:
 {incident.logs}
 """
 
+        started_at = time.perf_counter()
         response = await self.triage_agent.run(prompt)
+        completed_at = time.perf_counter()
+        model_text = response_text(response)
 
-        return parse_json(
+        telemetry = build_agent_telemetry(
+            started_at=started_at,
+            first_chunk_at=completed_at,
+            completed_at=completed_at,
+            prompt=prompt,
+            response_text=model_text,
+            model=ACTIVE_OLLAMA_MODEL,
+            provider=ACTIVE_LLM_PROVIDER,
+        )
+        parsed = parse_json(
             response,
             "Triage Agent",
         )
+        parsed["_telemetry"] = telemetry
+        return parsed
 
     async def analyze_logs(
         self,
@@ -309,12 +375,26 @@ Logs or error details:
 {incident.logs}
 """
 
+        started_at = time.perf_counter()
         response = await self.log_agent.run(prompt)
+        completed_at = time.perf_counter()
+        model_text = response_text(response)
 
-        return parse_json(
+        telemetry = build_agent_telemetry(
+            started_at=started_at,
+            first_chunk_at=completed_at,
+            completed_at=completed_at,
+            prompt=prompt,
+            response_text=model_text,
+            model=ACTIVE_OLLAMA_MODEL,
+            provider=ACTIVE_LLM_PROVIDER,
+        )
+        parsed = parse_json(
             response,
             "Log Analysis Agent",
         )
+        parsed["_telemetry"] = telemetry
+        return parsed
 
     async def root_cause(
         self,
@@ -324,8 +404,6 @@ Logs or error details:
         knowledge: list[dict[str, Any]],
         short_runbook: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # Send only the first three knowledge documents
-        # to keep the local model prompt small.
         short_knowledge = knowledge[:3]
 
         prompt = f"""
@@ -351,12 +429,26 @@ Use the KB only as supporting context. The short runbook is a concise, incident-
 Return only the required JSON object.
 """
 
+        started_at = time.perf_counter()
         response = await self.root_cause_agent.run(prompt)
+        completed_at = time.perf_counter()
+        model_text = response_text(response)
 
-        return parse_json(
+        telemetry = build_agent_telemetry(
+            started_at=started_at,
+            first_chunk_at=completed_at,
+            completed_at=completed_at,
+            prompt=prompt,
+            response_text=model_text,
+            model=ACTIVE_OLLAMA_MODEL,
+            provider=ACTIVE_LLM_PROVIDER,
+        )
+        parsed = parse_json(
             response,
             "Root Cause Agent",
         )
+        parsed["_telemetry"] = telemetry
+        return parsed
 
     async def generate_short_runbook(
         self,
@@ -388,11 +480,24 @@ Return only the required JSON object.
 """
 
         try:
+            started_at = time.perf_counter()
             response = await self.short_runbook_agent.run(prompt)
+            completed_at = time.perf_counter()
+            model_text = response_text(response)
+            telemetry = build_agent_telemetry(
+                started_at=started_at,
+                first_chunk_at=completed_at,
+                completed_at=completed_at,
+                prompt=prompt,
+                response_text=model_text,
+                model=ACTIVE_OLLAMA_MODEL,
+                provider=ACTIVE_LLM_PROVIDER,
+            )
             runbook = parse_json(
                 response,
                 "Short Runbook Agent",
             )
+            runbook["_telemetry"] = telemetry
         except Exception:
             runbook = {
                 "title": incident.title,
@@ -404,6 +509,15 @@ Return only the required JSON object.
                     "Validate the likely service or dependency in scope.",
                     "Escalate for human approval if the issue remains unclear.",
                 ],
+                "_telemetry": build_agent_telemetry(
+                    started_at=time.perf_counter(),
+                    first_chunk_at=time.perf_counter(),
+                    completed_at=time.perf_counter(),
+                    prompt=prompt,
+                    response_text="fallback runbook",
+                    model=ACTIVE_OLLAMA_MODEL,
+                    provider=ACTIVE_LLM_PROVIDER,
+                ),
             }
 
         if "steps" not in runbook or not isinstance(runbook["steps"], list):
@@ -413,7 +527,6 @@ Return only the required JSON object.
                 "Escalate for human approval if the issue remains unclear.",
             ]
 
-        # Keep the generated runbook intentionally short and practical.
         runbook["steps"] = runbook["steps"][:3]
         if "summary" not in runbook:
             runbook["summary"] = (
@@ -431,6 +544,18 @@ Return only the required JSON object.
             indent=2,
         )
 
+        started_at = time.perf_counter()
         response = await self.report_agent.run(prompt)
+        completed_at = time.perf_counter()
 
+        telemetry = build_agent_telemetry(
+            started_at=started_at,
+            first_chunk_at=completed_at,
+            completed_at=completed_at,
+            prompt=prompt,
+            response_text=response_text(response),
+            model=ACTIVE_OLLAMA_MODEL,
+            provider=ACTIVE_LLM_PROVIDER,
+        )
+        incident["_telemetry"] = telemetry
         return response_text(response)

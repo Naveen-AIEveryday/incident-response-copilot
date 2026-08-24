@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from app.agents import parse_json
+from app.agents import build_agent_telemetry, parse_json
 from app.config import get_backend_candidates
 
 
@@ -64,6 +64,42 @@ def test_generate_short_runbook_from_incident_and_kb():
     assert runbook["title"] == "Chrome Website Loading Runbook"
     assert "dns" in runbook["summary"].lower()
     assert len(runbook["steps"]) >= 3
+
+
+def test_build_agent_telemetry_tracks_latency_and_context_usage():
+    telemetry = build_agent_telemetry(
+        started_at=100.0,
+        first_chunk_at=101.5,
+        completed_at=104.2,
+        prompt="incident details and investigation context",
+        response_text="root cause summary",
+        model="llama3.2",
+        provider="cloud",
+        context_window=128000,
+    )
+
+    assert telemetry["ttft_ms"] == 1500
+    assert telemetry["total_ms"] == 4200
+    assert telemetry["model"] == "llama3.2"
+    assert telemetry["provider"] == "cloud"
+    assert telemetry["context_usage_percent"] >= 0
+
+
+def test_build_agent_telemetry_estimates_ttft_below_total_when_not_streaming():
+    telemetry = build_agent_telemetry(
+        started_at=100.0,
+        first_chunk_at=104.2,
+        completed_at=104.2,
+        prompt="incident details and investigation context",
+        response_text="root cause summary",
+        model="llama3.2",
+        provider="cloud",
+        context_window=128000,
+    )
+
+    assert telemetry["ttft_ms"] < telemetry["total_ms"]
+    assert telemetry["ttft_ms"] >= 0
+    assert telemetry["total_ms"] >= 0
 
 
 def test_get_backend_candidates_prioritizes_running_port_and_common_fallbacks():
