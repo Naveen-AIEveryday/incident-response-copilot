@@ -26,52 +26,53 @@ A deterministic script or standard rule-based parser is fundamentally insufficie
 - Automatic code patching or Git pull-request generation.
 
 ## 4. Architecture
+
 ```mermaid
 flowchart TD
     User([Operations Engineer]) -->|1. Submits Incident Form| UI[Streamlit User Interface]
     UI -->|2. POST /incidents| FastAPIServer[FastAPI REST Backend]
     FastAPIServer -->|3. Dispatches Request| Orch[Incident Orchestrator]
-    Orch -->|4. Writes Initial Record & Audit Event| DB[(SQLite Database WAL Mode)]
+    Orch -->|4. Writes Initial Record and Audit Event| DB[(SQLite Database WAL Mode)]
     
-    subgraph Parallel Stage 1: Triage & Log Analysis
+    subgraph "Parallel Stage 1: Triage and Log Analysis"
         Orch -->|5a. Async Call| TriageAgent[Triage Specialist Agent]
         Orch -->|5b. Async Call| LogAgent[Log Analysis SRE Agent]
         TriageAgent -->|6a. Validated TriageOutput JSON| Orch
         LogAgent -->|6b. Validated LogAnalysisOutput JSON| Orch
     end
-
-    subgraph Stage 2: Hybrid Retrieval
+    
+    subgraph "Stage 2: Hybrid Retrieval"
         Orch -->|7. Semantic + Keyword Query| SKPlugin[Semantic Kernel Knowledge Plugin]
-        SKPlugin -->|8. Dense Vector & Sparse Search| ChromaDBStore[(ChromaDB Persistent Vector Store)]
+        SKPlugin -->|8. Dense Vector and Sparse Search| ChromaDBStore[(ChromaDB Persistent Vector Store)]
         ChromaDBStore -->|9. Top Ranked Runbooks| SKPlugin
         SKPlugin -->|10. Formatted KB Matches| Orch
     end
-
-    subgraph Stage 3 & 4: Synthesis & Diagnosis
+    
+    subgraph "Stage 3 and 4: Synthesis and Diagnosis"
         Orch -->|11. Dispatches Context| RunbookAgent[Short Runbook Specialist Agent]
         RunbookAgent -->|12. Validated ShortRunbookOutput JSON| Orch
-        Orch -->|13. Dispatches Evidence & Runbook| RootCauseAgent[Root Cause Commander Agent]
-        RootCauseAgent -->|14. Validated RootCauseOutput JSON & CLI Commands| Orch
+        Orch -->|13. Dispatches Evidence and Runbook| RootCauseAgent[Root Cause Commander Agent]
+        RootCauseAgent -->|14. Validated RootCauseOutput JSON and CLI Commands| Orch
     end
-
-    Orch -->|15. Updates Status: pending_human_approval| DB
+    
+    Orch -->|15. Updates Status to pending_human_approval| DB
     Orch -->|16. Returns Investigation Payload| FastAPIServer
-    FastAPIServer -->|17. Displays Results & Diagnostic Commands| UI
+    FastAPIServer -->|17. Displays Results and Diagnostic Commands| UI
     
     subgraph Human Approval Gate
-        User -->|18. Submits Decision & Sign-off| UI
+        User -->|18. Submits Decision and Sign-off| UI
         UI -->|19. POST /incidents/approval| FastAPIServer
-        FastAPIServer -->|20. Records Decision & Status Change| Orch
+        FastAPIServer -->|20. Records Decision and Status Change| Orch
         Orch -->|21. Logs human_approval Event| DB
     end
-
+    
     subgraph Post-Mortem Reporting
         User -->|22. Requests Final Report| UI
-        UI -->|23. POST /incidents/{id}/report| FastAPIServer
+        UI -->|23. POST /incidents/id/report| FastAPIServer
         FastAPIServer -->|24. Triggers Report Generation| Orch
-        Orch -->|25. Formats Summary & Evidence| ReportAgent[Post-Mortem Reporting Agent]
+        Orch -->|25. Formats Summary and Evidence| ReportAgent[Post-Mortem Reporting Agent]
         ReportAgent -->|26. Returns Markdown Incident Report| Orch
-        Orch -->|27. Stores Report & Audit Trail| DB
+        Orch -->|27. Stores Report and Audit Trail| DB
         Orch -->|28. Renders Report| UI
     end
 ```
