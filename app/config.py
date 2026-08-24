@@ -191,3 +191,13 @@ Path(SQLITE_PATH).parent.mkdir(
     parents=True,
     exist_ok=True,
 )
+
+CHROMA_PATH = os.getenv(
+    "CHROMA_PATH",
+    "./data/chroma",
+)
+
+Path(CHROMA_PATH).mkdir(
+    parents=True,
+    exist_ok=True,
+)

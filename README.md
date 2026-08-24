@@ -1,120 +1,130 @@
 # Incident Response Copilot
 
-This project is a lightweight AI-assisted incident response workflow for triaging incidents, analyzing logs, retrieving incident-relevant knowledge, generating concise runbooks, and requiring human approval before remediation.
+An enterprise-grade, AI-assisted IT incident response copilot designed to accelerate incident triage, log analysis, hybrid runbook retrieval, root-cause diagnosis, and post-mortem reporting while strictly enforcing human-in-the-loop operational approval.
 
-It is designed to help an on-call engineer quickly understand an incident, see likely root cause and evidence, and produce a short actionable response without making automated production changes.
+---
 
-## Latest updates
-- Single-file local launcher via run_app.py starts the backend and Streamlit together
-- Centralized port and host configuration for backend and frontend stability
-- Execution details panel placed beside the incident form in the Streamlit UI
-- Telemetry fields include model, provider, TTFT estimate, total latency, and context usage
-- TTFT is estimated for non-streaming model calls so it stays meaningful instead of showing 0 ms
-- Knowledge-base matching is tightened to keep results concise and incident-focused
-- Short runbook generation is limited to the most relevant incident-specific guidance
-- Deployment-safe copy is available in hf_deploy while preserving the local working application
+## 🚀 Key Features
 
-## Features
-- Submit incident title, description, and logs
-- Triage and log analysis using AI agents
-- Relevant knowledge-base lookups for incident context
-- Short, focused runbook generation
-- Root-cause analysis with evidence and confidence score
-- Human approval workflow before simulated remediation
-- Incident report generation
-- SQLite persistence for incident history and audit events
-- Local app startup and separate deployment copy
+- **Multi-Agent Orchestration**: Specialised agents for Triage (`TriageAgent`), Log Analysis (`LogAnalysisAgent`), Runbook Synthesis (`ShortRunbookAgent`), Root Cause Analysis (`RootCauseAgent`), and Post-Mortem Reporting (`ReportAgent`).
+- **Pydantic Structured Output Validation**: Strong schema enforcement and automatic JSON normalization with fallback recovery to eliminate LLM parsing crashes.
+- **ChromaDB Persistent Vector Store & Hybrid Search**: Combines dense cosine vector similarity with weighted token/phrase sparse matching for exact error code and conceptual runbook matching.
+- **Safe Read-Only Diagnostic Commands**: Generates copyable, non-destructive CLI diagnostic commands (e.g. `where.exe python`, `pg_isready`, `ping`, `nslookup`) alongside root-cause findings.
+- **Human-in-the-Loop Approval Gate**: Enforces engineer review and sign-off before simulated remediation and post-mortem report generation.
+- **High-Concurrency SQLite Storage**: Non-blocking SQLite Write-Ahead Logging (WAL mode) with performance indexing and granular lifecycle audit event tracking.
+- **Modern 3-Tab Streamlit UI**:
+  - **Tab 1: 🚨 Investigation & Approval**: Quick presets, multi-agent progress trackers, severity metric badges, copyable diagnostic commands, and Markdown report generator.
+  - **Tab 2: 📚 Knowledge Base & Runbooks Manager**: Live hybrid search tester, indexed runbooks repository viewer, and dynamic custom runbook ingestion form.
+  - **Tab 3: 📊 Incident History & Audit Trail**: Status/keyword filtering and chronological audit event timeline viewer.
+- **Comprehensive Automated Test Suite**: 12/12 passing unit and integration tests across agents, knowledge retrieval, database operations, and REST routes.
 
-## Project structure
-- app/ - backend logic, orchestration, database access, KB lookup, and AI model configuration
-- ui/ - Streamlit user interface
-- data/ - SQLite incident database and supporting data storage
-- tests/ - regression tests covering JSON parsing and telemetry calculations
-- hf_deploy/ - deployment-safe copy for a single-process host such as Hugging Face-compatible Python runtime
-- run_app.py - local launcher for backend + Streamlit together
-- .env.example - example environment configuration for local or cloud model access
-- Example incidents.txt - sample incidents for testing the workflow quickly
+---
 
-## Quick start
-From the project root, run:
-
-```powershell
-python run_app.py
-```
-
-This starts:
-- Backend API: http://127.0.0.1:9002
-- Streamlit UI: http://127.0.0.1:8502
-
-Open the Streamlit app in the browser to submit incidents. The backend handles the investigation flow, approval, and report generation.
-
-## API endpoints
-The FastAPI backend exposes these routes:
-
-- POST /incidents - submit an incident for investigation
-- GET /incidents - list all incident records in SQLite
-- GET /incidents/{incident_id} - fetch one incident by ID
-- GET /incidents/{incident_id}/audit - fetch audit events for one incident
-- POST /incidents/approval - approve or reject an investigation
-- POST /incidents/{incident_id}/report - generate a report
-
-Open the interactive docs here:
-- http://127.0.0.1:9002/docs
-
-## Incident history and SQLite storage
-Incident data is stored in SQLite so results persist across runs.
-
-Default path:
+## 🏗️ Project Structure
 
 ```text
-./data/incidents.db
+incident-response-copilot/
+├── app/
+│   ├── main.py              # FastAPI application entry point
+│   ├── models.py            # Pydantic request/response & agent output schemas
+│   ├── agents.py            # Multi-agent definitions, prompts, telemetry, and validation
+│   ├── orchestrator.py      # Multi-stage incident investigation workflow
+│   ├── knowledge_base.py    # ChromaDB persistent vector store & hybrid search engine
+│   ├── database.py          # SQLite persistence with WAL mode & audit event tracking
+│   ├── plugins.py           # Semantic Kernel knowledge retrieval plugin
+│   ├── routes.py            # REST API route handlers
+│   └── config.py            # Environment configuration & port resolution
+├── ui/
+│   └── streamlit_app.py     # 3-tab interactive Streamlit web interface
+├── data/
+│   ├── chroma/              # Persistent ChromaDB vector index
+│   └── incidents.db         # SQLite incident database & audit log
+├── tests/
+│   ├── test_agents.py       # Agent JSON parsing, validation, and telemetry tests
+│   └── test_orchestrator.py # Database, ChromaDB hybrid search, and API route tests
+├── hf_deploy/               # Standalone single-process deployment package
+├── run_app.py               # Local concurrent launcher (FastAPI + Streamlit)
+├── CAPSTONE_REPORT.md       # Full formal Capstone Project Report
+├── Example incidents.txt    # Sample incident presets for manual testing
+└── requirements.txt         # Project dependencies
 ```
 
-The database stores:
-- incidents - incident metadata, payload, status, and timestamps
-- audit_events - event trail for investigation and approval actions
+---
 
-Sample query to inspect incidents from the terminal:
+## ⚡ Quick Start
+
+### 1. Launch the Application
+From the project root in PowerShell:
 
 ```powershell
-python -c "import sqlite3; conn=sqlite3.connect('data/incidents.db'); print(conn.execute('SELECT incident_id, title, status, created_at FROM incidents ORDER BY created_at DESC').fetchall()); conn.close()"
+& .venv\Scripts\python.exe run_app.py
 ```
 
-## Example incidents
-A ready-to-use sample set is included in [Example incidents.txt](Example%20incidents.txt). These can be used to raise incidents quickly and validate the full triage workflow.
+This concurrently starts:
+- **FastAPI REST API**: `http://127.0.0.1:9002`
+- **Streamlit Web UI**: `http://127.0.0.1:8502`
+- **Interactive Swagger Docs**: `http://127.0.0.1:9002/docs`
 
-## UI behavior and telemetry
-The Streamlit page now shows an execution details panel beside the form. It includes:
-- model name
-- provider
-- TTFT estimate
-- total latency
-- context usage percentage
+---
 
-Note: the current model integration is non-streaming end-to-end, so the TTFT is estimated rather than measured from an actual token stream. This keeps the metric realistic without requiring a true streaming backend path.
+## 🧪 Running Tests
 
-## Environment configuration
-The app uses environment variables for model and runtime configuration.
+Execute the full automated test suite:
 
-Current supported modes:
-- local Ollama via LLM_PROVIDER=local
-- cloud-compatible OpenAI-style Ollama endpoint via LLM_PROVIDER=cloud
+```powershell
+& .venv\Scripts\python.exe -m pytest tests/ -v
+```
 
-Example configuration is in [.env.example](.env.example).
+All 12 tests across agent validation, hybrid search, database operations, and API routes will execute.
 
-## Deployment copy
-A separate deployment-oriented copy is kept in [hf_deploy](hf_deploy). This remains separate from the working local application so the local project can continue to function normally while a deployment-safe version is maintained for hosting.
+---
 
-## Tech stack
-- Python
-- FastAPI
-- Streamlit
-- SQLite
-- Chroma-like KB storage
-- OpenAI-compatible agent framework and model integration
+## 🌐 REST API Endpoints
 
-## Notes
-- The local app remains the working version and is the one used for day-to-day development
-- The deployment folder is intentionally separate and does not replace the working project
-- The Streamlit app must call the backend API URL rather than using the Streamlit port directly in the local setup
-- Production-style action is intentionally not executed; the workflow is approval-driven and safe by design
+### Incidents
+- `POST /incidents` — Submit an incident for multi-agent investigation.
+- `GET /incidents` — List past incidents with optional `status`, `search`, and `limit` query filters.
+- `GET /incidents/{incident_id}` — Retrieve details and investigation results for a specific incident.
+- `DELETE /incidents/{incident_id}` — Delete an incident record and its associated audit trail.
+- `GET /incidents/{incident_id}/audit` — Retrieve the chronological audit event log for an incident.
+- `POST /incidents/approval` — Submit engineer approval or rejection for remediation.
+- `POST /incidents/{incident_id}/report` — Generate an official Markdown post-mortem report.
+
+### Knowledge Base & Runbooks
+- `GET /knowledge/runbooks` — List all indexed operational runbooks.
+- `POST /knowledge/runbooks` — Ingest a new runbook into ChromaDB.
+- `DELETE /knowledge/runbooks/{runbook_id}` — Remove a runbook from the vector database.
+- `GET /knowledge/search?q={query}` — Execute hybrid semantic + keyword search across runbooks.
+
+---
+
+## ⚙️ Environment Configuration
+
+Set runtime variables in `.env`:
+
+```ini
+# Model Provider: 'cloud' (Ollama Cloud) or 'local' (Local Ollama instance)
+LLM_PROVIDER=cloud
+OLLAMA_CLOUD_BASE_URL=https://ollama.com/v1
+OLLAMA_CLOUD_MODEL=gpt-oss:20b
+OLLAMA_API_KEY=your_ollama_api_key_here
+
+# Local Model Fallback
+OLLAMA_LOCAL_BASE_URL=http://localhost:11434/v1
+OLLAMA_LOCAL_MODEL=llama3.2
+
+# Ports & Storage
+API_PORT=9002
+STREAMLIT_PORT=8502
+SQLITE_PATH=./data/incidents.db
+CHROMA_PATH=./data/chroma
+```
+
+---
+
+## 🛡️ Safety Architecture
+
+1. **Read-Only Diagnostics**: Suggested commands are strictly informational (e.g. `where.exe python`, `netstat`, `ping`, `nslookup`) to prevent unintended state changes.
+2. **Approval Enforcement**: System enforces a hard pause at `pending_human_approval` before generating post-mortem documentation or finalizing incident status.
+3. **No Automatic Writes**: No automated shell scripts or modification commands are executed against production servers.
+

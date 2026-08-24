@@ -13,6 +13,8 @@ class Database:
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL;")
+        connection.execute("PRAGMA synchronous=NORMAL;")
         return connection
 
     @staticmethod
@@ -44,6 +46,26 @@ class Database:
                     details TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
+                """
+            )
+
+            # Performance indexes
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_incidents_created
+                ON incidents(created_at DESC)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_incidents_status
+                ON incidents(status)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_incident
+                ON audit_events(incident_id)
                 """
             )
 
@@ -97,6 +119,21 @@ class Database:
                 ),
             )
 
+    def update_incident_status(
+        self,
+        incident_id: str,
+        status: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE incidents
+                SET status = ?
+                WHERE incident_id = ?
+                """,
+                (status, incident_id),
+            )
+
     def get_incident(
         self,
         incident_id: str,
@@ -127,21 +164,31 @@ class Database:
 
     def list_incidents(
         self,
+        status: str | None = None,
+        search_query: str | None = None,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM incidents WHERE 1=1"
+        params: list[Any] = []
+
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+
+        if search_query:
+            query += " AND (title LIKE ? OR description LIKE ? OR logs LIKE ?)"
+            term = f"%{search_query}%"
+            params.extend([term, term, term])
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM incidents
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
+            rows = connection.execute(query, tuple(params)).fetchall()
 
         incidents = []
-
         for row in rows:
             incident = dict(row)
-
             if incident["result"]:
                 incident["result"] = json.loads(
                     incident["result"]
@@ -152,6 +199,21 @@ class Database:
             incidents.append(incident)
 
         return incidents
+
+    def delete_incident(
+        self,
+        incident_id: str,
+    ) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM incidents WHERE incident_id = ?",
+                (incident_id,),
+            )
+            connection.execute(
+                "DELETE FROM audit_events WHERE incident_id = ?",
+                (incident_id,),
+            )
+            return cursor.rowcount > 0
 
     def add_event(
         self,
@@ -196,7 +258,6 @@ class Database:
             ).fetchall()
 
         events = []
-
         for row in rows:
             event = dict(row)
             event["details"] = json.loads(
@@ -204,4 +265,4 @@ class Database:
             )
             events.append(event)
 
-        return events
+        return events

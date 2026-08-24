@@ -150,6 +150,13 @@ if result:
     with st.expander("Root Cause Analysis"):
         st.json(root_cause)
 
+    suggested_commands = result.get("suggested_commands", []) or root_cause.get("suggested_commands", [])
+    if suggested_commands:
+        st.subheader("Recommended Safe Diagnostic Commands (Read-Only)")
+        for cmd in suggested_commands:
+            st.code(cmd, language="bash")
+
+
     approval_form = st.form(f"approval_form_{incident_id}")
     approval_form.subheader("Human approval")
     approved_by = approval_form.text_input(

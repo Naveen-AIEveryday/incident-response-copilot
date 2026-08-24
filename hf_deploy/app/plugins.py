@@ -20,6 +20,19 @@ class KnowledgePlugin:
         matches = self.knowledge_base.search(query)
         return json.dumps(matches, indent=2)
 
+    @kernel_function(
+        name="add_knowledge",
+        description="Add a new runbook or operational guide to the knowledge base.",
+    )
+    def add_knowledge(self, title: str, content: str, document_type: str = "runbook") -> str:
+        doc = self.knowledge_base.add_document(
+            title=title,
+            content=content,
+            document_type=document_type,
+        )
+        return json.dumps(doc, indent=2)
+
+
 
 def create_kernel(
     knowledge_base: KnowledgeBase,

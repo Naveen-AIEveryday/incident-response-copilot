@@ -48,7 +48,7 @@ class Orchestrator:
             },
         )
 
-        # Triage and log analysis are independent, so they run together.
+        # Stage 1: Triage and log analysis run concurrently
         triage, log_analysis = await asyncio.gather(
             self.agents.triage(incident),
             self.agents.analyze_logs(incident),
@@ -66,7 +66,7 @@ class Orchestrator:
             log_analysis,
         )
 
-        # Send complete incident context to the knowledge search.
+        # Stage 2: Hybrid Knowledge Retrieval
         search_query = f"""
 Incident title:
 {incident.title}
@@ -90,8 +90,7 @@ Log-analysis result:
             )
         )
 
-        # Keep KB context deliberately short and relevant.
-        knowledge = json.loads(knowledge_json)[:2]
+        knowledge = json.loads(knowledge_json)[:3]
 
         self.database.add_event(
             incident_id,
@@ -101,6 +100,7 @@ Log-analysis result:
             },
         )
 
+        # Stage 3: Short Runbook Generation
         short_runbook = await self.agents.generate_short_runbook(
             incident=incident,
             triage=triage,
@@ -114,6 +114,7 @@ Log-analysis result:
             short_runbook,
         )
 
+        # Stage 4: Root Cause Synthesis & Diagnostic Commands
         root_cause = await self.agents.root_cause(
             incident=incident,
             triage=triage,
@@ -128,6 +129,8 @@ Log-analysis result:
             root_cause,
         )
 
+        suggested_commands = root_cause.get("suggested_commands", [])
+
         result = {
             "incident_id": incident_id,
             "status": "pending_human_approval",
@@ -136,6 +139,7 @@ Log-analysis result:
             "knowledge_matches": knowledge,
             "short_runbook": short_runbook,
             "root_cause_analysis": root_cause,
+            "suggested_commands": suggested_commands,
             "remediation_note": (
                 "No production action was executed. "
                 "Human approval is required."
@@ -241,3 +245,36 @@ Log-analysis result:
             "incident_id": incident_id,
             "report": report,
         }
+
+    def list_runbooks(
+        self,
+        document_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.knowledge_base.list_documents(document_type=document_type)
+
+    def add_runbook(
+        self,
+        title: str,
+        content: str,
+        document_type: str = "runbook",
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self.knowledge_base.add_document(
+            title=title,
+            content=content,
+            document_type=document_type,
+            tags=tags,
+        )
+
+    def delete_runbook(
+        self,
+        runbook_id: str,
+    ) -> bool:
+        return self.knowledge_base.delete_document(runbook_id)
+
+    def search_runbooks(
+        self,
+        query: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        return self.knowledge_base.search(query=query, limit=limit)

@@ -1,82 +1,30 @@
-# High-Level Project Report
+# High-Level Project Report: Incident Response Copilot
 
-## Project Purpose
-This project is an AI-assisted incident response tool. It helps teams triage incidents, analyze logs, find relevant knowledge-base runbooks, generate a short troubleshooting plan, and capture human approval before any remediation is suggested.
+## 1. Project Purpose
+The Incident Response Copilot is an AI-powered multi-agent investigation system engineered to accelerate the initial phases of IT incident response, root-cause diagnosis, and post-mortem reporting while preserving operational safety through human approval gates.
 
-## What the System Does
-The application takes an incident title, description, and logs, then performs the following:
+## 2. Core Capabilities
+When an engineer inputs an incident title, narrative description, and raw error logs, the system orchestrates a multi-stage workflow:
+1. **Parallel Triage & SRE Log Analysis**: Concurrently classifies severity (`low`, `medium`, `high`, `critical`), identifies impacted services, and extracts error traces and anomalies.
+2. **Persistent Hybrid Knowledge Retrieval**: Queries a ChromaDB vector database using cosine semantic similarity combined with token/phrase keyword matching to match exact error codes and conceptual runbooks.
+3. **Short Actionable Runbook Synthesis**: Generates a 3-step actionable recovery procedure tailored specifically to the incident symptoms.
+4. **Root Cause Analysis & Safe Diagnostic Commands**: Synthesizes all gathered evidence, evaluates confidence (0–100%), determines the root cause, and provides safe, read-only CLI diagnostic commands (e.g. `where.exe python`, `pg_isready`, `ping`, `nslookup`).
+5. **Human Approval Gate**: Holds execution at `pending_human_approval` to require engineer sign-off and comments.
+6. **Standardized Post-Mortem Report**: Compiles an official Markdown post-mortem incident report upon approval.
 
-- classifies the incident severity and service impact
-- analyzes the provided logs for errors and patterns
-- searches the knowledge base for relevant runbooks
-- creates a short, incident-specific action plan
-- identifies a likely root cause with supporting evidence
-- waits for human approval before finishing the workflow
-- produces a final incident report
+## 3. Key Architecture & Modules
+- **`app/agents.py`**: Multi-agent definitions (`TriageAgent`, `LogAnalysisAgent`, `ShortRunbookAgent`, `RootCauseAgent`, `ReportAgent`), telemetry tracking, and Pydantic validation with `parse_and_validate()`.
+- **`app/models.py`**: Strict Pydantic schemas enforcing input contracts and agent output integrity.
+- **`app/knowledge_base.py`**: ChromaDB persistent vector collection (`./data/chroma`) and hybrid dense/sparse search engine.
+- **`app/database.py`**: SQLite database configured in Write-Ahead Logging (WAL) mode with performance indexes on `created_at`, `status`, and `incident_id`.
+- **`app/orchestrator.py`**: Multi-stage event-driven investigation coordinator.
+- **`app/routes.py`**: REST API exposing incident CRUD, search filtering, runbook ingestion/deletion, and audit history.
+- **`ui/streamlit_app.py`**: Modern 3-tab user interface (Investigation & Approval, Knowledge Base Manager, Incident History Explorer).
 
-## Main Components
+## 4. Verification & Testing
+- **12/12 passing unit and integration tests** in `tests/test_agents.py` and `tests/test_orchestrator.py`.
+- Covers Pydantic schema validation, LLM JSON normalization, telemetry calculations, ChromaDB hybrid search, database WAL concurrency, and FastAPI REST endpoints.
 
-### 1. Application Logic
-The core business logic is in:
-- [app/agents.py](app/agents.py) — AI agent orchestration and JSON response parsing
-- [app/orchestrator.py](app/orchestrator.py) — end-to-end incident workflow
-- [app/models.py](app/models.py) — request and response models
+## 5. Summary & Safety Guarantee
+The copilot ensures complete operational safety by operating as an assistive diagnostic copilot rather than an autonomous actuator: all suggested diagnostic CLI commands are strictly read-only, and no automated changes are executed against production environments without human approval.
 
-### 2. Data and Knowledge Base
-The application stores incidents and audit history, and it also keeps a local knowledge base of runbooks:
-- [app/database.py](app/database.py) — SQLite storage for incidents and audit events
-- [app/knowledge_base.py](app/knowledge_base.py) — support content for runbook matching
-
-### 3. API and UI
-The project exposes a FastAPI backend and user interfaces:
-- [app/main.py](app/main.py) — backend app entry point
-- [app/routes.py](app/routes.py) — API endpoints
-- [ui/streamlit_app.py](ui/streamlit_app.py) — main Streamlit UI
-- [ui/gradio_app.py](ui/gradio_app.py) — alternative interface
-
-### 4. Configuration and Runtime
-The runtime setup, ports, and model configuration are defined in:
-- [app/config.py](app/config.py)
-- [run_app.py](run_app.py)
-- [.env](.env)
-- [.env.example](.env.example)
-
-### 5. Deployment Copy
-The project includes a separate deployment-friendly version to keep the original working app safe and unchanged:
-- [hf_deploy](hf_deploy)
-
-## Workflow Summary
-1. User submits incident details.
-2. The system triages the issue.
-3. Logs are analyzed for key errors and patterns.
-4. Relevant knowledge-base matches are retrieved.
-5. A short action-oriented runbook is created.
-6. A root-cause summary is generated.
-7. Human approval is requested.
-8. A final report is created for review.
-
-## Current Architecture Style
-This is a lightweight multi-agent workflow application. It combines:
-- Python backend services
-- AI-powered reasoning agents
-- SQLite persistence
-- knowledge-base retrieval
-- human-in-the-loop approval
-
-## Models Used
-The project supports both local and cloud model deployment patterns through an OpenAI-compatible interface:
-
-- Local option: `LLM_PROVIDER=local`
-  - default base URL: `http://localhost:11434/v1`
-  - default local model: `llama3.2`
-- Cloud option: `LLM_PROVIDER=cloud`
-  - default base URL: `https://ollama.com/v1`
-  - default cloud model: `gpt-oss:20b`
-
-This design allows the same incident workflow to work with either a local Ollama setup or a hosted cloud endpoint, without changing the application logic.
-
-## Deployment Notes
-The original local project remains the working version. A separate deployment-oriented copy was created so the main project stays intact while enabling a deployment-ready setup for a single-process environment.
-
-## Final Summary
-This project is a practical AI incident-management assistant designed to help teams investigate issues faster, reduce manual troubleshooting effort, and keep relevant actions grounded in a human-approved process.

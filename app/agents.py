@@ -1,10 +1,11 @@
 import json
 import re
 import time
-from typing import Any
+from typing import Any, Type, TypeVar
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
+from pydantic import BaseModel, ValidationError
 
 from app.config import (
     ACTIVE_LLM_PROVIDER,
@@ -12,16 +13,22 @@ from app.config import (
     ACTIVE_OLLAMA_BASE_URL,
     ACTIVE_OLLAMA_MODEL,
 )
-from app.models import IncidentRequest
+from app.models import (
+    IncidentRequest,
+    LogAnalysisOutput,
+    RootCauseOutput,
+    ShortRunbookOutput,
+    TriageOutput,
+)
+
+T = TypeVar("T", bound=BaseModel)
 
 
 def response_text(response: Any) -> str:
     """Extract text from an Agent Framework response."""
     text = getattr(response, "text", None)
-
     if text:
         return text
-
     return str(response)
 
 
@@ -106,6 +113,27 @@ def parse_json(
     return result
 
 
+def parse_and_validate(
+    response: Any,
+    model_cls: Type[T],
+    agent_name: str,
+    fallback_defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Parse JSON and validate against a target Pydantic model with fallback resilience."""
+    try:
+        raw_dict = parse_json(response, agent_name)
+        validated = model_cls.model_validate(raw_dict)
+        return validated.model_dump()
+    except (ValueError, ValidationError) as err:
+        if fallback_defaults:
+            try:
+                validated = model_cls.model_validate(fallback_defaults)
+                return validated.model_dump()
+            except Exception:
+                pass
+        raise err
+
+
 def build_agent_telemetry(
     *,
     started_at: float,
@@ -117,12 +145,7 @@ def build_agent_telemetry(
     provider: str | None = None,
     context_window: int = 128000,
 ) -> dict[str, Any]:
-    """Capture lightweight latency and prompt-size telemetry for the UI.
-
-    When the framework is used in non-streaming mode, there is no true first-token
-    event to measure. In that case, we estimate an early first-output timestamp so
-    TTFT stays realistic instead of being identical to total latency.
-    """
+    """Capture latency and prompt-size telemetry for the UI."""
     total_ms = max(0, int((completed_at - started_at) * 1000))
 
     if first_chunk_at is None or first_chunk_at >= completed_at:
@@ -137,7 +160,7 @@ def build_agent_telemetry(
     response_chars = len(response_text or "")
     estimated_tokens = max(1, (prompt_chars + response_chars) // 4)
     context_usage_percent = min(
-        100,
+        100.0,
         round((estimated_tokens / max(1, context_window)) * 100, 2),
     )
 
@@ -164,7 +187,6 @@ class IncidentAgents:
                 "Set it in the .env file."
             )
 
-        # Ollama exposes an OpenAI-compatible endpoint both locally and via cloud.
         self.client = OpenAIChatClient(
             api_key=ACTIVE_OLLAMA_API_KEY,
             base_url=ACTIVE_OLLAMA_BASE_URL,
@@ -196,7 +218,7 @@ Rules:
 - Use only the supplied incident information.
 - Do not invent facts.
 - Keep the response short.
-            """,
+            """.strip(),
         )
 
         self.log_agent = Agent(
@@ -229,7 +251,7 @@ Rules:
 - Use only the supplied logs or error details.
 - Do not invent evidence.
 - Keep the response short.
-            """,
+            """.strip(),
         )
 
         self.root_cause_agent = Agent(
@@ -245,9 +267,8 @@ Strict rules:
 - No Markdown fences, no code blocks, no prose before or after the JSON.
 - No trailing commas.
 - No comments or explanations.
-- No incomplete JSON.
 - Do not invent evidence.
-- Use only the supplied incident, logs, and knowledge-base evidence.
+- Include 1 to 3 safe read-only CLI diagnostic commands in "suggested_commands".
 
 Required structure:
 {
@@ -258,6 +279,10 @@ Required structure:
     "short evidence 2"
   ],
   "recommended_remediation": "one safe remediation recommendation",
+  "suggested_commands": [
+    "safe read-only diagnostic command 1",
+    "safe read-only diagnostic command 2"
+  ],
   "requires_human_approval": true
 }
 
@@ -265,12 +290,10 @@ Rules:
 - Return only one root cause.
 - Confidence must be an integer from 0 to 100.
 - Return only one remediation recommendation.
-- Keep the remediation short and practical.
-- Use the supplied incident and relevant knowledge.
-- Do not invent facts.
+- Suggested commands must be strictly read-only (e.g. status, logs, ping, nslookup, where.exe).
 - Do not execute any action.
 - Human approval is always required.
-            """,
+            """.strip(),
         )
 
         self.short_runbook_agent = Agent(
@@ -302,7 +325,7 @@ Rules:
 - Base the steps on the actual incident symptoms and likely troubleshooting path.
 - Do not claim production changes were made.
 - Keep the response brief and actionable.
-            """,
+            """.strip(),
         )
 
         self.report_agent = Agent(
@@ -316,12 +339,13 @@ Include:
 ## Summary
 ## Root Cause
 ## Evidence
+## Diagnostic Commands
 ## Recommended Remediation
 ## Approval Status
 
 Mention that remediation was simulated.
 Never claim that a production action was executed.
-            """,
+            """.strip(),
         )
 
     async def triage(
@@ -353,9 +377,16 @@ Logs or error details:
             model=ACTIVE_OLLAMA_MODEL,
             provider=ACTIVE_LLM_PROVIDER,
         )
-        parsed = parse_json(
+        parsed = parse_and_validate(
             response,
+            TriageOutput,
             "Triage Agent",
+            fallback_defaults={
+                "severity": "medium",
+                "affected_service": incident.title[:30],
+                "incident_summary": incident.description[:100],
+                "initial_investigation_steps": ["Inspect system error logs.", "Verify service connectivity."],
+            },
         )
         parsed["_telemetry"] = telemetry
         return parsed
@@ -389,9 +420,16 @@ Logs or error details:
             model=ACTIVE_OLLAMA_MODEL,
             provider=ACTIVE_LLM_PROVIDER,
         )
-        parsed = parse_json(
+        parsed = parse_and_validate(
             response,
+            LogAnalysisOutput,
             "Log Analysis Agent",
+            fallback_defaults={
+                "key_errors": [incident.logs.splitlines()[0]] if incident.logs else ["Unknown error"],
+                "patterns": ["Anomalous error rate"],
+                "suspected_components": ["Application service"],
+                "evidence": [incident.logs[:150]],
+            },
         )
         parsed["_telemetry"] = telemetry
         return parsed
@@ -426,7 +464,7 @@ Generated short runbook:
 
 Use the KB only as supporting context. The short runbook is a concise, incident-specific summary and should not be treated as definitive evidence.
 
-Return only the required JSON object.
+Return only the required JSON object with suggested_commands for diagnosis.
 """
 
         started_at = time.perf_counter()
@@ -443,9 +481,18 @@ Return only the required JSON object.
             model=ACTIVE_OLLAMA_MODEL,
             provider=ACTIVE_LLM_PROVIDER,
         )
-        parsed = parse_json(
+        parsed = parse_and_validate(
             response,
+            RootCauseOutput,
             "Root Cause Agent",
+            fallback_defaults={
+                "root_cause": "Probable service configuration or environment error.",
+                "confidence": 60,
+                "evidence": log_analysis.get("evidence", [])[:2],
+                "recommended_remediation": "Review service logs and request approval before rollback.",
+                "suggested_commands": ["where.exe python", "python --version"],
+                "requires_human_approval": True,
+            },
         )
         parsed["_telemetry"] = telemetry
         return parsed
@@ -479,8 +526,8 @@ Produce a concise incident-specific troubleshooting runbook that is short and ac
 Return only the required JSON object.
 """
 
+        started_at = time.perf_counter()
         try:
-            started_at = time.perf_counter()
             response = await self.short_runbook_agent.run(prompt)
             completed_at = time.perf_counter()
             model_text = response_text(response)
@@ -493,12 +540,23 @@ Return only the required JSON object.
                 model=ACTIVE_OLLAMA_MODEL,
                 provider=ACTIVE_LLM_PROVIDER,
             )
-            runbook = parse_json(
+            runbook = parse_and_validate(
                 response,
+                ShortRunbookOutput,
                 "Short Runbook Agent",
+                fallback_defaults={
+                    "title": incident.title,
+                    "summary": "Validate the impacted dependency and symptoms before escalation.",
+                    "steps": [
+                        "Check the exact incident symptom and logs.",
+                        "Validate the likely service or dependency in scope.",
+                        "Escalate for human approval if the issue remains unclear.",
+                    ],
+                },
             )
             runbook["_telemetry"] = telemetry
         except Exception:
+            completed_at = time.perf_counter()
             runbook = {
                 "title": incident.title,
                 "summary": (
@@ -510,9 +568,9 @@ Return only the required JSON object.
                     "Escalate for human approval if the issue remains unclear.",
                 ],
                 "_telemetry": build_agent_telemetry(
-                    started_at=time.perf_counter(),
-                    first_chunk_at=time.perf_counter(),
-                    completed_at=time.perf_counter(),
+                    started_at=started_at,
+                    first_chunk_at=completed_at,
+                    completed_at=completed_at,
                     prompt=prompt,
                     response_text="fallback runbook",
                     model=ACTIVE_OLLAMA_MODEL,
@@ -520,19 +578,7 @@ Return only the required JSON object.
                 ),
             }
 
-        if "steps" not in runbook or not isinstance(runbook["steps"], list):
-            runbook["steps"] = [
-                "Check the exact incident symptom and logs.",
-                "Validate the likely service or dependency in scope.",
-                "Escalate for human approval if the issue remains unclear.",
-            ]
-
-        runbook["steps"] = runbook["steps"][:3]
-        if "summary" not in runbook:
-            runbook["summary"] = (
-                "Validate the likely failing path, confirm the impacted dependency, and escalate if the issue is not yet isolated."
-            )
-
+        runbook["steps"] = runbook.get("steps", [])[:3]
         return runbook
 
     async def report(
@@ -558,4 +604,4 @@ Return only the required JSON object.
             provider=ACTIVE_LLM_PROVIDER,
         )
         incident["_telemetry"] = telemetry
-        return response_text(response)
+        return response_text(response)
